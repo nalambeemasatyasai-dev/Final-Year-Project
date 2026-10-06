@@ -1,0 +1,20 @@
+,Disengaged (0),Partially Engaged (1),Highly Engaged (2)
+browDownLeft,0.1408,0.2078,0.252
+browDownRight,0.1675,0.2328,0.2684
+browInnerUp,0.2015,0.2666,0.1884
+browOuterUpLeft,0.5558,0.619,0.5863
+browOuterUpRight,0.3738,0.3961,0.3916
+eyeBlinkLeft,0.7063,0.5777,0.3615
+eyeBlinkRight,0.6772,0.5024,0.2446
+eyeSquintLeft,0.801,0.9604,0.9512
+eyeSquintRight,0.767,0.7708,0.7429
+eyeWideLeft,0.0049,0.004,0.0102
+eyeLookDownLeft,0.6796,0.5425,0.2594
+eyeLookUpLeft,0.1505,0.4482,0.7299
+jawOpen,0.017,0.0182,0.0108
+mouthSmileLeft,0.051,0.0547,0.0369
+mouthSmileRight,0.0583,0.0659,0.0499
+mouthFrownLeft,0.034,0.0592,0.0823
+mouthFrownRight,0.0291,0.0659,0.0823
+mouthPucker,0.2791,0.3476,0.3275
+mouthClose,0.0,0.0004,0.0034

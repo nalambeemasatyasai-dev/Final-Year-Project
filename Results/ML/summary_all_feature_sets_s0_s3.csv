@@ -1,0 +1,29 @@
+Feature_Set,model,Accuracy,Precision,Recall,F-measure
+S0,Random Forest,0.61,0.59,0.56,0.57
+S0,Gradient Boosting,0.61,0.59,0.56,0.58
+S0,XGBoost,0.6,0.57,0.55,0.56
+S0,CatBoost,0.62,0.58,0.56,0.57
+S0,LightGBM,0.59,0.57,0.54,0.55
+S0,Decision Tree,0.53,0.49,0.52,0.5
+S0,SVM,0.61,0.59,0.56,0.57
+S1,Random Forest,0.54,0.5,0.42,0.43
+S1,Gradient Boosting,0.52,0.49,0.41,0.42
+S1,XGBoost,0.51,0.47,0.41,0.42
+S1,CatBoost,0.55,0.51,0.43,0.44
+S1,LightGBM,0.55,0.47,0.44,0.44
+S1,Decision Tree,0.49,0.41,0.39,0.39
+S1,SVM,0.51,0.31,0.37,0.29
+S2,Random Forest,0.57,0.54,0.45,0.47
+S2,Gradient Boosting,0.57,0.55,0.47,0.49
+S2,XGBoost,0.57,0.58,0.5,0.52
+S2,CatBoost,0.58,0.57,0.48,0.5
+S2,LightGBM,0.58,0.56,0.48,0.5
+S2,Decision Tree,0.52,0.48,0.48,0.48
+S2,SVM,0.55,0.72,0.39,0.36
+S3,Random Forest,0.64,0.61,0.57,0.58
+S3,Gradient Boosting,0.61,0.59,0.56,0.57
+S3,XGBoost,0.62,0.59,0.56,0.57
+S3,CatBoost,0.63,0.61,0.58,0.59
+S3,LightGBM,0.62,0.6,0.57,0.58
+S3,Decision Tree,0.61,0.57,0.58,0.58
+S3,SVM,0.63,0.61,0.58,0.59

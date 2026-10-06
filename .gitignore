@@ -27,3 +27,9 @@ DL_models/train_files/hyper-1/
 *.log
 scratch/
 
+catboost_info/
+*.task
+
+# Standalone binary and testing logs
+cloudflared.exe
+Testing_Results/
