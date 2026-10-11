@@ -88,7 +88,10 @@ def load_trained_model(backbone_type, ckpt_name):
     ckpt_path = os.path.join(BASE_DIR, 'DL_models', 'hyper-1', ckpt_name)
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint missing: {ckpt_path}")
-    ckpt = torch.load(ckpt_path, map_location=device)
+    try:
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(ckpt_path, map_location=device)
     state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
     model.load_state_dict(state_dict)
     model.eval()

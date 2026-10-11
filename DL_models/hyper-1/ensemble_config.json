@@ -1,0 +1,34 @@
+{
+  "checkpoints": [
+    "C:\\Users\\golla\\Downloads\\Student-Engagement-main\\DL_models\\hyper-1\\best_model_image_only_efficientnet.pth",
+    "C:\\Users\\golla\\Downloads\\Student-Engagement-main\\DL_models\\hyper-1\\best_model_image_only_resnet.pth",
+    "C:\\Users\\golla\\Downloads\\Student-Engagement-main\\DL_models\\hyper-1\\best_model_upgraded_efficientnet.pth",
+    "C:\\Users\\golla\\Downloads\\Student-Engagement-main\\DL_models\\hyper-1\\best_model_upgraded_efficientnet_b1.pth",
+    "C:\\Users\\golla\\Downloads\\Student-Engagement-main\\DL_models\\hyper-1\\best_model_upgraded_resnet.pth",
+    "C:\\Users\\golla\\Downloads\\Student-Engagement-main\\DL_models\\hyper-1\\best_model_upgraded_resnet50.pth"
+  ],
+  "weights": [
+    0.15626725565985644,
+    0.17007178354500277,
+    0.1706239646604086,
+    0.17283268912203206,
+    0.16344561016013254,
+    0.16675869685256767
+  ],
+  "member_val_acc": [
+    0.6402714932126696,
+    0.6968325791855203,
+    0.6990950226244343,
+    0.7081447963800905,
+    0.669683257918552,
+    0.6832579185520362
+  ],
+  "bias": [
+    -0.6,
+    0.19999999999999996,
+    0.0
+  ],
+  "val_raw_acc": 0.7104072398190046,
+  "val_cal_acc": 0.7194570135746606,
+  "seed": 42
+}

@@ -28,7 +28,68 @@ sys.path.append(SCRIPT_DIR)
 from multimodal_dataloader import get_upgraded_dataloaders
 from dual_branch_network import get_upgraded_model
 
-def train_epoch(model, train_loader, criterion, optimizer, device):
+
+def mixup_batch(images, labels, alpha=0.2):
+    """Mixup regularisation: convex combination of two samples + their labels."""
+    if alpha is None or alpha <= 0:
+        return images, labels, labels, 1.0
+    lam = float(np.random.beta(alpha, alpha))
+    idx = torch.randperm(images.size(0), device=images.device)
+    mixed = lam * images + (1.0 - lam) * images[idx]
+    return mixed, labels, labels[idx], lam
+
+
+def with_bias(logits, bias):
+    """Add a learned per-class decision bias to logits (no-op when bias is None)."""
+    if bias is None:
+        return logits
+    return logits + torch.as_tensor(bias, dtype=logits.dtype, device=logits.device).view(1, -1)
+
+
+def calibrate_bias(model, val_loader, device, grid=21, span=2.5):
+    """
+    Post-hoc decision-bias calibration on the VALIDATION split.
+
+    The training sampler deliberately reweights classes, which shifts the model's
+    implicit class prior away from the true 9% / 51% / 40% data prior. That shift
+    is exactly what makes the model under-predict class 1 (Nominally Engaged).
+    A tiny additive bias on the logits realigns the decision thresholds to the
+    real prior. We grid-search (b0, b1) with b2 fixed at 0 (the bias is only
+    defined up to an additive constant) to maximise validation accuracy.
+
+    Because it is fit on the validation split (never the test split) it cannot
+    leak test information.
+    """
+    model.eval()
+    logits_list, y_list = [], []
+    with torch.no_grad():
+        for images, blendshapes, labels, _ in val_loader:
+            out = model(images.to(device), blendshapes.to(device))
+            logits_list.append(out.cpu())
+            y_list.append(labels.numpy())
+    logits = torch.cat(logits_list).numpy()
+    y = np.concatenate(y_list)
+
+    best_acc, best_bias = -1.0, np.zeros(3, dtype=np.float32)
+    best_sq = np.inf
+    for b0 in np.linspace(-span, span, grid):
+        for b1 in np.linspace(-span, span, grid):
+            adj = logits.copy()
+            adj[:, 0] += b0
+            adj[:, 1] += b1
+            preds = adj.argmax(axis=1)
+            # Optimize balanced accuracy so all 3 classes (Disengaged, Nominally, Highly) are equally responsive
+            acc = float(balanced_accuracy_score(y, preds))
+            sq = b0 * b0 + b1 * b1
+            if acc > best_acc or (acc == best_acc and sq < best_sq):
+                best_acc, best_sq = acc, sq
+                best_bias = np.array([b0, b1, 0.0], dtype=np.float32)
+    return best_bias, best_acc
+
+
+def train_epoch(model, train_loader, criterion, optimizer, device,
+                mixup_alpha=0.0, scheduler=None, blend_noise=0.0,
+                geom_dropout_p=0.0):
     model.train()
     running_loss = 0.0
     all_preds = []
@@ -39,14 +100,42 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
         blendshapes = blendshapes.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
+        # Blendshape jitter: tiny Gaussian noise on the 52-d FACS vector so the
+        # model cannot memorise exact MediaPipe scores (masks sensor noise).
+        if blend_noise and blend_noise > 0:
+            blendshapes = blendshapes + torch.randn_like(blendshapes) * blend_noise
+
+        # Mixup: mix images AND blendshapes with the SAME permutation so the
+        # two modalities stay paired.
+        if mixup_alpha and mixup_alpha > 0:
+            lam = float(np.random.beta(mixup_alpha, mixup_alpha))
+            idx = torch.randperm(images.size(0), device=device)
+            images = lam * images + (1.0 - lam) * images[idx]
+            blendshapes = lam * blendshapes + (1.0 - lam) * blendshapes[idx]
+            labels_b = labels[idx]
+        else:
+            lam, labels_b = 1.0, labels
+
+        # Modality dropout: with prob geom_dropout_p, zero the geometry branch
+        # (images-only forward) so the net keeps strong visual features and
+        # cannot lean entirely on the 52-d FACS shortcut.
+        drop_geom = (geom_dropout_p > 0 and
+                     float(torch.rand(1).item()) < geom_dropout_p)
+        model_kwargs = {}
+        if drop_geom and not getattr(model, 'image_only', False):
+            zeros = torch.zeros_like(blendshapes)
+            outputs = model(images, zeros, **model_kwargs)
+        else:
+            outputs = model(images, blendshapes, **model_kwargs)
         optimizer.zero_grad()
-        outputs = model(images, blendshapes)
-        loss = criterion(outputs, labels)
+        loss = lam * criterion(outputs, labels) + (1.0 - lam) * criterion(outputs, labels_b)
         loss.backward()
-        
+
         # Gradient clipping to stabilize training
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
 
         running_loss += loss.item() * images.size(0)
         preds = torch.argmax(outputs, dim=1).cpu().numpy()
@@ -59,7 +148,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
     return epoch_loss, epoch_acc, epoch_bal_acc
 
 
-def validate_epoch(model, val_loader, criterion, device):
+def validate_epoch(model, val_loader, criterion, device, bias=None):
     model.eval()
     running_loss = 0.0
     all_preds = []
@@ -71,8 +160,9 @@ def validate_epoch(model, val_loader, criterion, device):
             blendshapes = blendshapes.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
-            outputs = model(images, blendshapes)
-            loss = criterion(outputs, labels)
+            raw = model(images, blendshapes)
+            loss = criterion(raw, labels)          # loss on raw logits
+            outputs = with_bias(raw, bias)          # decisions on calibrated logits
 
             running_loss += loss.item() * images.size(0)
             preds = torch.argmax(outputs, dim=1).cpu().numpy()
@@ -85,7 +175,7 @@ def validate_epoch(model, val_loader, criterion, device):
     return val_loss, val_acc, val_bal_acc, all_preds, all_labels
 
 
-def evaluate_test(model, test_loader, device):
+def evaluate_test(model, test_loader, device, bias=None):
     model.eval()
     all_preds = []
     all_labels = []
@@ -95,8 +185,8 @@ def evaluate_test(model, test_loader, device):
         for images, blendshapes, labels, _ in test_loader:
             images = images.to(device, non_blocking=True)
             blendshapes = blendshapes.to(device, non_blocking=True)
-            
-            outputs = model(images, blendshapes)
+
+            outputs = with_bias(model(images, blendshapes), bias)
             probs = torch.softmax(outputs, dim=1).cpu().numpy()
             preds = np.argmax(probs, axis=1)
 
@@ -118,8 +208,10 @@ def run_training(args):
     print(f"  Upgraded Student Engagement Model Training")
     print(f"  Device: {device} ({torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'})")
     print(f"  Backbone: {args.backbone}")
-    print(f"  Epochs: {args.epochs}, Batch Size: {args.batch_size}, LR: {args.lr}")
-    print(f"  Label Smoothing: 0.1 | Regularizer: Dropout 0.25 + LayerNorm")
+    print(f"  Epochs: {args.epochs}, Batch Size: {args.batch_size}, Max LR: {args.lr}")
+    print(f"  Label Smoothing: 0.1 | Dropout: {args.dropout} | Weight Decay: {args.weight_decay}")
+    print(f"  Strong Aug: {not args.weak_aug} | Mixup: {args.mixup} | Sampler: {args.balance_mode}")
+    print(f"  Scheduler: OneCycleLR (discriminative LR, backbone = head/10) | GradClip: 1.0")
     print(f"=======================================================\n")
 
     train_loader, val_loader, test_loader, test_df = get_upgraded_dataloaders(
@@ -127,7 +219,10 @@ def run_training(args):
         val_ratio=args.val_ratio,
         test_ratio=args.test_ratio,
         random_state=args.seed,
-        img_size=args.img_size
+        img_size=args.img_size,
+        strong_aug=not args.weak_aug,
+        flip_prob=0.5,
+        balance_mode=args.balance_mode,
     )
 
     # Save test set dataframe for standalone verification
@@ -144,15 +239,42 @@ def run_training(args):
         image_only=image_only
     ).to(device)
 
-    # Anti-overfitting: Label smoothing = 0.1
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    
-    # AdamW with weight decay
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    # Anti-overfitting & Class-Balancing: Compute inverse frequency weights
+    # so the model never collapses into majority Class 1 (Nominally Engaged)
+    class_counts = torch.tensor([412.0, 2247.0, 1762.0], device=device)
+    class_weights = (class_counts.sum() / (3.0 * class_counts)).float()
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
+
+    # Discriminative learning rates: the pretrained backbone is fine-tuned with a
+    # 10x smaller LR than the freshly initialised fusion head. This avoids
+    # destroying the pretrained features (underfitting) while still letting the
+    # head adapt quickly (previously the whole net was trained at one flat LR).
+    backbone_params, head_params = [], []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        (backbone_params if name.startswith('visual_backbone') else head_params).append(p)
+
+    optimizer = torch.optim.AdamW([
+        {'params': backbone_params, 'lr': args.lr * 0.1},
+        {'params': head_params, 'lr': args.lr},
+    ], weight_decay=args.weight_decay)
+
+    # OneCycleLR: warm up, then cosine-anneal to ~0 over the whole run. This
+    # guarantees the schedule is never cut short (the old CosineAnnealingLR used
+    # T_max=epochs but early stopping ended training at epoch 14/25).
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=[args.lr * 0.1, args.lr],
+        epochs=args.epochs,
+        steps_per_epoch=len(train_loader),
+        pct_start=0.3,
+        anneal_strategy='cos',
+    )
 
     best_val_score = 0.0
     best_epoch = 0
+    patience_counter = 0
     image_only = getattr(args, 'image_only', False)
     ckpt_name = f"best_model_image_only_{args.backbone}.pth" if image_only else f"best_model_upgraded_{args.backbone}.pth"
     checkpoint_path = os.path.join(SCRIPT_DIR, "hyper-1", ckpt_name)
@@ -169,9 +291,12 @@ def run_training(args):
 
     for epoch in range(1, args.epochs + 1):
         ep_t0 = time.time()
-        tr_loss, tr_acc, tr_bal = train_epoch(model, train_loader, criterion, optimizer, device)
+        tr_loss, tr_acc, tr_bal = train_epoch(
+            model, train_loader, criterion, optimizer, device,
+            mixup_alpha=args.mixup, scheduler=scheduler,
+            blend_noise=args.blend_noise,
+            geom_dropout_p=(0.0 if image_only else args.geom_dropout))
         val_loss, val_acc, val_bal, _, _ = validate_epoch(model, val_loader, criterion, device)
-        scheduler.step()
         ep_t1 = time.time()
 
         history['train_loss'].append(tr_loss)
@@ -181,8 +306,10 @@ def run_training(args):
         history['val_acc'].append(val_acc)
         history['val_bal_acc'].append(val_bal)
 
-        # Primary optimization metric: Harmonic blend of val accuracy and balanced accuracy
-        val_score = 0.5 * val_acc + 0.5 * val_bal
+        # Primary optimization metric: accuracy is the deployed objective
+        # (a random 10-image draw is scored on raw accuracy), with a small
+        # balanced-accuracy guard so the minority class never collapses.
+        val_score = 0.7 * val_acc + 0.3 * val_bal
 
         if val_score > best_val_score:
             best_val_score = val_score
@@ -195,7 +322,9 @@ def run_training(args):
                 'val_acc': val_acc,
                 'val_bal_acc': val_bal,
                 'backbone': args.backbone,
-                'img_size': args.img_size
+                'img_size': args.img_size,
+                'image_only': bool(image_only),
+                'dropout': args.dropout
             }, checkpoint_path)
             status_str = f"* BEST (Val: {val_acc*100:.1f}%)"
         else:
@@ -218,21 +347,39 @@ def run_training(args):
 
     # Load best checkpoint and evaluate on Unseen Test Set
     print(f"\n--- Loading Best Checkpoint from {checkpoint_path} ---")
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt['model_state_dict'])
 
-    test_acc, test_bal_acc, report, cm, _, y_true, y_pred = evaluate_test(model, test_loader, device)
+    # --- Post-hoc decision-bias calibration (fit on VALIDATION only) ---
+    bias, bias_val_acc = calibrate_bias(model, val_loader, device)
+    raw_val_acc = float(ckpt.get('val_acc', 0.0))
+    print(f"Raw val accuracy:      {raw_val_acc * 100:.2f}%")
+    print(f"Calibrated bias:       {np.round(bias, 3).tolist()}")
+    print(f"Calibrated val acc:    {bias_val_acc * 100:.2f}% "
+          f"(+{(bias_val_acc - raw_val_acc) * 100:.2f} pts)")
 
-    print("\n" + "="*55)
+    ckpt['bias'] = bias
+    ckpt['val_acc_after_bias'] = float(bias_val_acc)
+    torch.save(ckpt, checkpoint_path)
+    print(f"Saved calibrated bias into: {checkpoint_path}")
+
+    # NOTE: evaluate_test returns (all_probs, all_preds, all_labels) at the end,
+    # so y_pred must be bound BEFORE y_true (this was previously swapped).
+    test_acc_raw, test_bal_raw, _, _, _, _, _ = evaluate_test(model, test_loader, device, bias=None)
+    test_acc, test_bal_acc, report, cm, _, y_pred, y_true = evaluate_test(model, test_loader, device, bias=bias)
+
+    print("\n" + "=" * 55)
     print("        FINAL TEST SET EVALUATION REPORT (UNSEEN DATA)")
-    print("="*55)
-    print(f"Overall Test Accuracy:       {test_acc * 100:.2f}%")
-    print(f"Balanced Test Accuracy:      {test_bal_acc * 100:.2f}%\n")
+    print("=" * 55)
+    print(f"Overall Test Accuracy (raw):       {test_acc_raw * 100:.2f}%")
+    print(f"Overall Test Accuracy (calibrated):{test_acc * 100:.2f}%  "
+          f"(+{(test_acc - test_acc_raw) * 100:.2f} pts)")
+    print(f"Balanced Test Accuracy:            {test_bal_acc * 100:.2f}%\n")
     print("Detailed Classification Report:")
     print(report)
     print("Confusion Matrix:")
     print(cm)
-    print("="*55)
+    print("=" * 55)
 
     # Dynamic update of Results/DL/evaluation.csv with live test metrics
     dl_results_dir = os.path.join(BASE_DIR, "Results", "DL")
@@ -352,12 +499,25 @@ def run_training(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Upgraded Student Engagement Model")
     parser.add_argument("--backbone", type=str, default="efficientnet",
-                        choices=["efficientnet", "efficientnet_b0", "efficientnet_b1", "resnet", "resnet18", "resnet34", "resnet50", "mobilenet_v3", "mobilenet_v3_large", "mobilenet_v3_small"])
-    parser.add_argument("--epochs", type=int, default=25)
+                        choices=["efficientnet", "efficientnet_b0", "efficientnet_b1", "resnet", "resnet18", "resnet50"])
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--dropout", type=float, default=0.25)
-    parser.add_argument("--patience", type=int, default=7)
+    parser.add_argument("--lr", type=float, default=1e-3,
+                        help="Max LR for OneCycleLR (backbone uses lr*0.1)")
+    parser.add_argument("--weight_decay", type=float, default=1e-2)
+    parser.add_argument("--mixup", type=float, default=0.15,
+                        help="Mixup alpha (0 disables). e.g. 0.2 for stronger regularisation.")
+    parser.add_argument("--blend_noise", type=float, default=0.01,
+                        help="Gaussian jitter std on the 52-d FACS vector (0 disables).")
+    parser.add_argument("--geom_dropout", type=float, default=0.35,
+                        help="Per-batch prob of zeroing the blendshape branch (modality dropout).")
+    parser.add_argument("--balance_mode", type=str, default="sqrt",
+                        choices=["sqrt", "uniform", "natural"],
+                        help="Class re-weighting of the training sampler")
+    parser.add_argument("--weak_aug", action="store_true",
+                        help="Disable the strong anti-overfitting augmentation pipeline")
+    parser.add_argument("--dropout", type=float, default=0.30)
+    parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--img_size", type=int, default=224)
     parser.add_argument("--val_ratio", type=float, default=0.10)
     parser.add_argument("--test_ratio", type=float, default=0.10)

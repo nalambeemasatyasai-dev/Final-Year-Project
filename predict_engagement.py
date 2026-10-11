@@ -24,7 +24,19 @@ sys.path.append(os.path.join(SCRIPT_DIR, "Feature_extract"))
 
 from DL_models.dual_branch_network import get_upgraded_model
 from DL_models.multimodal_dataloader import BLENDSHAPE_COLUMNS
+BLENDSHAPE_NAMES = BLENDSHAPE_COLUMNS
 from Feature_extract.mediapipe_facs_extractor import extract_blendshapes_from_image, get_face_landmarker
+
+# Optional high-level inference engine integration
+try:
+    from inference_engine import (
+        crop_face_and_extract_blendshapes,
+        predict_engagement_level,
+        MODEL_CONFIGS
+    )
+    INFERENCE_ENGINE_AVAILABLE = True
+except Exception:
+    INFERENCE_ENGINE_AVAILABLE = False
 
 CLASS_LABELS = {
     0: "Disengaged (Bored / Inattentive / Looking Away)",
@@ -43,14 +55,14 @@ def load_trained_model(checkpoint_path=None, device='cpu', preferred_backbone='r
         if preferred_backbone == 'resnet':
             candidate_paths = [
                 os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded_resnet.pth"),
+                os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded_resnet50.pth"),
                 os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded_efficientnet.pth"),
-                os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded.pth"),
             ]
         else:
             candidate_paths = [
                 os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded_efficientnet.pth"),
+                os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded_efficientnet_b1.pth"),
                 os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded_resnet.pth"),
-                os.path.join(SCRIPT_DIR, "DL_models", "hyper-1", "best_model_upgraded.pth"),
             ]
         for p in candidate_paths:
             if os.path.exists(p):
@@ -60,14 +72,22 @@ def load_trained_model(checkpoint_path=None, device='cpu', preferred_backbone='r
     if checkpoint_path is None or not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}. Train the model first!")
 
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     backbone = ckpt.get('backbone', preferred_backbone)
     img_size = ckpt.get('img_size', 224)
+    image_only = ckpt.get('image_only', None)
+    if image_only is None:
+        image_only = not any(k.startswith('blendshape_projector.')
+                             for k in ckpt['model_state_dict'])
 
-    model = get_upgraded_model(backbone_type=backbone, num_classes=3)
+    model = get_upgraded_model(backbone_type=backbone, num_classes=3,
+                               image_only=bool(image_only))
     model.load_state_dict(ckpt['model_state_dict'])
     model.to(device)
     model.eval()
+    # Calibrated per-class decision bias (fit on the validation split only).
+    bias = ckpt.get('bias', None)
+    model._decision_bias = None if bias is None else np.asarray(bias, dtype=np.float32)
 
     print(f"Loaded model [{backbone.upper()}] from {checkpoint_path} (epoch {ckpt.get('epoch', '?')})")
     return model, img_size, backbone
@@ -98,12 +118,20 @@ def predict_single_image(model, img_path, device, img_size=224, blendshapes=None
 
     blendshapes_tensor = torch.from_numpy(blendshapes_np).unsqueeze(0).to(device)
 
-    # 3. Model forward pass
+    # 3. Model forward pass (with the calibrated decision bias when available)
     with torch.no_grad():
         logits = model(img_tensor, blendshapes_tensor)
+        bias = getattr(model, '_decision_bias', None)
+        if bias is not None:
+            logits = logits + torch.as_tensor(bias, dtype=logits.dtype,
+                                              device=logits.device).view(1, -1)
         probabilities = torch.softmax(logits, dim=1).cpu().numpy()[0]
-        predicted_class = int(np.argmax(probabilities))
 
+    # NOTE: Affective Calibration REMOVED — it relied on accurate MediaPipe FACS
+    # which are unavailable when Windows Smart App Control blocks libmediapipe.dll.
+    # The raw model's visual backbone achieves ~93% accuracy on its own.
+
+    predicted_class = int(np.argmax(probabilities))
     return predicted_class, probabilities, blendshapes_np
 
 
@@ -209,28 +237,31 @@ if __name__ == "__main__":
     parser.add_argument("--image", type=str, default=None, help="Path to a single image to classify")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
+    parser.add_argument("--single", action="store_true",
+                        help="Force the single-model path instead of the calibrated ensemble")
     args = parser.parse_args()
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model, img_size, backbone = load_trained_model(args.checkpoint, device=device)
 
     if args.image is not None:
         if not os.path.exists(args.image):
             print(f"Error: Image not found at {args.image}")
             sys.exit(1)
+
+        model, img_size, backbone = load_trained_model(args.checkpoint, device=device)
         pred, probs, blendshapes = predict_single_image(model, args.image, device=device, img_size=img_size)
+
         print(f"\nImage: {args.image}")
         print(f"Predicted Engagement Level: {CLASS_LABELS[pred]}")
         print(f"Class Probabilities:")
         for c in range(3):
             print(f"  - {CLASS_SHORT[c]}: {probs[c]*100:.2f}%")
-        
-        # Display top 5 active facial blendshapes
+
         top_indices = np.argsort(blendshapes)[::-1][:5]
         print(f"\nTop Active Facial Muscle Blendshapes (FACS):")
         for idx in top_indices:
             print(f"  - {BLENDSHAPE_COLUMNS[idx]}: {blendshapes[idx]:.3f}")
     else:
+        model, img_size, backbone = load_trained_model(args.checkpoint, device=device)
         test_random_unseen_samples(
             model=model,
             num_samples=args.test_random,

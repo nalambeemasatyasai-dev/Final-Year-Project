@@ -59,15 +59,6 @@ class StudentEngagementDualBranchModel(nn.Module):
             self.visual_backbone = eff.features
             self.avgpool = eff.avgpool
             self.visual_dim = eff.classifier[1].in_features  # 1280
-        elif self.backbone_type == "resnet34":
-            weights = models.ResNet34_Weights.DEFAULT if pretrained else None
-            res = models.resnet34(weights=weights)
-            self.visual_backbone = nn.Sequential(
-                res.conv1, res.bn1, res.relu, res.maxpool,
-                res.layer1, res.layer2, res.layer3, res.layer4
-            )
-            self.avgpool = res.avgpool
-            self.visual_dim = res.fc.in_features  # 512
         elif self.backbone_type == "resnet50":
             weights = models.ResNet50_Weights.DEFAULT if pretrained else None
             res = models.resnet50(weights=weights)
@@ -86,20 +77,8 @@ class StudentEngagementDualBranchModel(nn.Module):
             )
             self.avgpool = res.avgpool
             self.visual_dim = res.fc.in_features  # 512
-        elif self.backbone_type in ["mobilenet_v3", "mobilenet_v3_large", "mobilenet"]:
-            weights = models.MobileNet_V3_Large_Weights.DEFAULT if pretrained else None
-            mob = models.mobilenet_v3_large(weights=weights)
-            self.visual_backbone = mob.features
-            self.avgpool = mob.avgpool
-            self.visual_dim = mob.classifier[0].in_features  # 960
-        elif self.backbone_type == "mobilenet_v3_small":
-            weights = models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
-            mob = models.mobilenet_v3_small(weights=weights)
-            self.visual_backbone = mob.features
-            self.avgpool = mob.avgpool
-            self.visual_dim = mob.classifier[0].in_features  # 576
         else:
-            raise ValueError(f"Unsupported backbone_type: {backbone_type}. Supported: resnet18, resnet34, resnet50, efficientnet_b0, efficientnet_b1, mobilenet_v3, mobilenet_v3_small")
+            raise ValueError(f"Unsupported backbone_type: {backbone_type}. Supported: resnet18, resnet50, efficientnet_b0, efficientnet_b1")
 
         # 2. FACS Blendshapes Geometric Branch (Skipped in Image-Only mode)
         if not self.image_only:
@@ -148,16 +127,21 @@ class StudentEngagementDualBranchModel(nn.Module):
         return logits
 
 
-def get_upgraded_model(backbone_type="efficientnet", num_classes=3, dropout_rate=0.25, image_only=False):
+LEGACY_GEOM = {'fusion_hidden_dim': 256, 'geom_hidden_dim': 128, 'geom_out_dim': 64}
+
+
+def get_upgraded_model(backbone_type="efficientnet", num_classes=3, dropout_rate=0.25, image_only=False, **kwargs):
     """
     Factory function to construct the Engagement model (Dual-Branch or Image-Only).
     """
+    fusion_hidden_dim = kwargs.get('fusion_hidden_dim', 256)
     return StudentEngagementDualBranchModel(
         backbone_type=backbone_type,
         num_classes=num_classes,
         blendshape_dim=52,
-        fusion_hidden_dim=256,
+        fusion_hidden_dim=fusion_hidden_dim,
         dropout_rate=dropout_rate,
         pretrained=True,
         image_only=image_only
     )
+

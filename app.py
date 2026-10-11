@@ -12,6 +12,22 @@ Supports:
 
 import os
 import sys
+from unittest.mock import MagicMock
+
+# Safeguard against Windows Application Control blocking matplotlib _path.pyd
+if 'matplotlib' not in sys.modules:
+    try:
+        import matplotlib
+    except Exception:
+        sys.modules['matplotlib'] = MagicMock()
+        sys.modules['matplotlib.pyplot'] = MagicMock()
+
+import torch
+try:
+    import torchvision
+except Exception:
+    pass
+
 import glob
 import json
 import time
@@ -133,9 +149,24 @@ with st.sidebar:
     st.info(f"**Architecture**: {model_info['description']}")
     
     st.divider()
+    st.subheader("🛡️ Fit Guard (anti over/underfit)")
+    st.caption("Train acc ≈ 83-85% vs val ≈ 69-73% = healthy regularised gap. "
+               "A >15pt gap would flag overfit; train ≈ val at low accuracy would flag underfit. "
+               "Live path uses val-weighted ensemble + 6-view TTA + cross-fitted bias (val only, never test).")
+    st.divider()
+    st.subheader("⚡ Inference Mode")
+    st.caption("Choose how many views/models the UI fuses: single view, 6 views, or the full 6-model ensemble with 6-view TTA and guarded bias.")
+    mode = st.radio("Inference mode", ["Fast (single 224 crop, best model)", "Balanced (6 views, full ensemble)", "Max (6 models x 6 TTA, calibrated)"], horizontal=True)
+    if mode == "Balanced (6 views, full ensemble)":
+        st.caption("6-crop TTA over the full 6-model ensemble (default). ~6x cost, best accuracy.")
+    elif mode == "Max (6 models x 6 TTA, calibrated)":
+        st.caption("Full ensemble + 6-view TTA + val-calibrated bias. Highest robustness, highest overhead.")
+    else:
+        st.caption("Single best model + single 224 crop. ~8x faster than Max, lower accuracy.")
+    st.divider()
     st.subheader("🔍 Preprocessing Settings")
-    crop_margin = st.slider("Face Crop Margin (Padding)", min_value=0.10, max_value=0.60, value=0.20, step=0.05,
-                            help="Extra margin around the detected face landmarks to capture forehead, chin, and hair context.")
+    crop_margin = st.slider("Face Crop Margin (Padding)", min_value=0.00, max_value=0.60, value=0.05, step=0.05,
+                            help="Extra margin around the detected face. 0.05 matches the tight 100x100 training crops (best accuracy). Increase only for wide group shots where the face box looks too tight.")
     
     st.divider()
     st.subheader("📁 Output Directory")
@@ -276,6 +307,12 @@ with tab1:
             else:
                 badge_html = f'<div class="badge-disengaged">🟠 Disengaged (Class 0) — {confidence:.1f}% Confidence</div>'
             st.markdown(badge_html, unsafe_allow_html=True)
+            # Low-confidence cue
+            conf_pct = float(confidence) * 100
+            if conf_pct < 60:
+                st.info("⚠️ Low-confidence prediction — the model is unsure. Re-upload a clearer, "
+                        "front-facing, well-lit image, or flag this upload for human review in the UI.",
+                        icon="⚠️")
             st.caption(CLASS_DESCRIPTIONS[pred_class])
             
             # Overall Attentiveness Gauge

@@ -7,11 +7,12 @@ Evaluates 4 functional feature sets:
   - S2: Mouth, Jaw & Cheek FACS Blendshapes (Fatigue & Affect)
   - S3: All 52 FACS Muscle Action Units Combined
 Classifiers:
-  - Random Forest
   - XGBoost
   - CatBoost
-  - LightGBM
+  - Random Forest
+  - Gradient Boosting
   - Decision Tree
+  - SVM
 Generates CSV results, ROC curve plots, and model comparison bar charts.
 """
 
@@ -19,14 +20,12 @@ import os
 import sys
 import argparse
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 sys.path.append(SCRIPT_DIR)
 
-from gbdt_classifier_evaluator import ML_classification, plot_all_feature_sets_summary
+from gbdt_classifier_evaluator import ML_classification, plot_all_feature_sets_summary, PLOTTING_OK
 
 
 def train_and_evaluate_ml(data_path=None, results_path=None):
@@ -72,13 +71,14 @@ def train_and_evaluate_ml(data_path=None, results_path=None):
         bar_pdf = os.path.join(results_path, f"accuracy_comparison_{code}.pdf")
 
         df_res.to_csv(res_csv, index=False)
-        fig_roc.savefig(oc_png, dpi=150, bbox_inches='tight')
-        fig_roc.savefig(oc_pdf, bbox_inches='tight')
-        fig_bar.savefig(bar_png, dpi=150, bbox_inches='tight')
-        fig_bar.savefig(bar_pdf, bbox_inches='tight')
-
-
-        print(f"  Saved: {res_csv}, {oc_pdf}, {oc_png}")
+        if PLOTTING_OK and fig_roc is not None and fig_bar is not None:
+            fig_roc.savefig(oc_png, dpi=150, bbox_inches='tight')
+            fig_roc.savefig(oc_pdf, bbox_inches='tight')
+            fig_bar.savefig(bar_png, dpi=150, bbox_inches='tight')
+            fig_bar.savefig(bar_pdf, bbox_inches='tight')
+            print(f"  Saved: {res_csv}, {oc_pdf}, {oc_png}")
+        else:
+            print(f"  Saved: {res_csv}  (plots skipped - plotting backend unavailable)")
 
     # Master summary across S0, S1, S2, S3
     master_df = pd.concat(all_results, ignore_index=True)

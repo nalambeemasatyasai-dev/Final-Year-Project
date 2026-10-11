@@ -10,6 +10,7 @@ Features:
 """
 
 import os
+import random
 import numpy as np
 import pandas as pd
 import torch
@@ -33,6 +34,52 @@ BLENDSHAPE_COLUMNS = [
     'noseSneerRight'
 ]
 
+# ---------------------------------------------------------------------------
+# Left/Right blendshape pairs that must be SWAPPED when an image is mirrored.
+# Without this, RandomHorizontalFlip shows the network a mirrored face while
+# feeding it un-mirrored FACS muscle scores -> contradictory multimodal signal
+# (a major source of overfitting / poor fusion generalisation).
+# ---------------------------------------------------------------------------
+FLIP_PAIR_NAMES = [
+    ('browDownLeft', 'browDownRight'),
+    ('browOuterUpLeft', 'browOuterUpRight'),
+    ('cheekSquintLeft', 'cheekSquintRight'),
+    ('eyeBlinkLeft', 'eyeBlinkRight'),
+    ('eyeLookDownLeft', 'eyeLookDownRight'),
+    ('eyeLookInLeft', 'eyeLookInRight'),
+    ('eyeLookOutLeft', 'eyeLookOutRight'),
+    ('eyeLookUpLeft', 'eyeLookUpRight'),
+    ('eyeSquintLeft', 'eyeSquintRight'),
+    ('eyeWideLeft', 'eyeWideRight'),
+    ('jawLeft', 'jawRight'),
+    ('mouthDimpleLeft', 'mouthDimpleRight'),
+    ('mouthFrownLeft', 'mouthFrownRight'),
+    ('mouthLeft', 'mouthRight'),
+    ('mouthLowerDownLeft', 'mouthLowerDownRight'),
+    ('mouthPressLeft', 'mouthPressRight'),
+    ('mouthSmileLeft', 'mouthSmileRight'),
+    ('mouthStretchLeft', 'mouthStretchRight'),
+    ('mouthUpperUpLeft', 'mouthUpperUpRight'),
+    ('noseSneerLeft', 'noseSneerRight'),
+]
+
+# Pre-computed permutation applied to the 52-d blendshape vector on horizontal flip.
+_FLIP_PERM = list(range(len(BLENDSHAPE_COLUMNS)))
+_col_index = {c: i for i, c in enumerate(BLENDSHAPE_COLUMNS)}
+for _l, _r in FLIP_PAIR_NAMES:
+    if _l in _col_index and _r in _col_index:
+        _i, _j = _col_index[_l], _col_index[_r]
+        _FLIP_PERM[_i], _FLIP_PERM[_j] = _FLIP_PERM[_j], _FLIP_PERM[_i]
+FLIP_PERMUTATION = _FLIP_PERM
+
+
+def _mirror_pil(image):
+    """Horizontal flip compatible with both old and new Pillow versions."""
+    try:
+        return image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    except AttributeError:
+        return image.transpose(Image.FLIP_LEFT_RIGHT)
+
 class StudentEngagementDataset(Dataset):
     """
     Multimodal Dataset yielding:
@@ -41,10 +88,14 @@ class StudentEngagementDataset(Dataset):
     - label: int64 (0: Disengaged, 1: Nominally Engaged, 2: Highly Engaged)
     - img_path: string (for auditing / visualization)
     """
-    def __init__(self, df, transform=None):
+    def __init__(self, df, transform=None, flip_prob=0.0, mirror_consistent_flip=True):
         self.df = df.reset_index(drop=True)
         self.transform = transform
-        
+        self.flip_prob = float(flip_prob) if flip_prob else 0.0
+        self.mirror_consistent_flip = mirror_consistent_flip
+        # Index permutation used to left/right-swap FACS scores when mirroring.
+        self._flip_perm = torch.tensor(FLIP_PERMUTATION, dtype=torch.long)
+
         self.image_paths = self.df['image_path'].tolist()
         self.labels = self.df['class_label'].astype(int).tolist()
         
@@ -68,7 +119,15 @@ class StudentEngagementDataset(Dataset):
         
         # Open image using PIL with clean RGB conversion (no CLAHE distortion)
         image = Image.open(img_path).convert('RGB')
-        
+
+        # Mirror augmentation with a MATCHED FACS left/right swap so the image
+        # and the 52-d blendshape vector remain physically consistent.
+        # (Plain RandomHorizontalFlip alone feeds contradictory multimodal signal.)
+        if self.flip_prob > 0.0 and random.random() < self.flip_prob:
+            image = _mirror_pil(image)
+            if self.mirror_consistent_flip:
+                blendshapes = blendshapes[self._flip_perm]
+
         if self.transform is not None:
             image = self.transform(image)
         else:
@@ -77,26 +136,56 @@ class StudentEngagementDataset(Dataset):
         return image, blendshapes, torch.tensor(label, dtype=torch.long), img_path
 
 
-def get_image_transforms(img_size=224):
+def get_image_transforms(img_size=224, strong=True):
     """
     Builds transforms using high-fidelity Lanczos resampling.
     Lanczos (8-lobed sinc filter) avoids bilinear blurring and preserves
     crisp eye, mouth, and brow edges without ringing artifacts.
-    """
-    train_transform = transforms.Compose([
-        transforms.Resize((img_size, img_size), interpolation=transforms.InterpolationMode.LANCZOS),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(degrees=6),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225])
-    ])
 
-    val_transform = transforms.Compose([
-        transforms.Resize((img_size, img_size), interpolation=transforms.InterpolationMode.LANCZOS),
+    NOTE: horizontal mirroring is intentionally NOT part of this pipeline.
+    It is applied inside StudentEngagementDataset together with a matched
+    left/right FACS blendshape swap so both modalities stay consistent.
+
+    `strong=True` adds the anti-overfitting augmentations (geometry + photometric
+    + erase) needed to close the ~19-point train/val generalisation gap.
+    """
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    lanczos = transforms.InterpolationMode.LANCZOS
+
+    base = [transforms.Resize((img_size, img_size), interpolation=lanczos)]
+
+    if strong:
+        train_transform = transforms.Compose(base + [
+            # Geometric jitter: small pose / scale / translation variation
+            # (PIL affine only supports NEAREST/BILINEAR/BICUBIC - not Lanczos;
+            #  Lanczos is still used for the base Resize above.)
+            transforms.RandomAffine(degrees=10, translate=(0.08, 0.08),
+                                    scale=(0.90, 1.10), shear=6,
+                                    interpolation=transforms.InterpolationMode.BILINEAR),
+            # Photometric jitter: lighting / white-balance variation
+            transforms.ColorJitter(brightness=0.25, contrast=0.25,
+                                   saturation=0.20, hue=0.02),
+            transforms.RandomApply(
+                [transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5))], p=0.15),
+            transforms.RandomGrayscale(p=0.05),
+            transforms.ToTensor(),
+            normalize,
+            # Cutout-style regularisation (forces reliance on distributed cues)
+            transforms.RandomErasing(p=0.25, scale=(0.02, 0.15),
+                                     ratio=(0.5, 2.0), value='random'),
+        ])
+    else:
+        train_transform = transforms.Compose(base + [
+            transforms.RandomAffine(degrees=6, translate=(0.05, 0.05),
+                                    interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.ToTensor(),
+            normalize,
+        ])
+
+    val_transform = transforms.Compose(base + [
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225])
+        normalize,
     ])
 
     return train_transform, val_transform
@@ -136,10 +225,20 @@ def stratified_numpy_split(df, label_col='class_label', val_ratio=0.10, test_rat
 
 
 def get_upgraded_dataloaders(data_dir=None, blendshapes_file=None, batch_size=32,
-                            val_ratio=0.10, test_ratio=0.10, random_state=42, img_size=224):
+                            val_ratio=0.10, test_ratio=0.10, random_state=42, img_size=224,
+                            strong_aug=True, flip_prob=0.5, balance_mode='sqrt'):
     """
     Creates stratified Train, Validation, and Test dataloaders.
     Fixes the author's 3-sample bug with a proper WeightedRandomSampler.
+
+    balance_mode controls how aggressively the training sampler re-weights the
+    three engagement classes:
+      - 'uniform': every class sampled equally (prior = 1/3,1/3,1/3)
+      - 'sqrt'    : sampling mass ~ sqrt(class_count)  <-- balanced compromise
+      - 'natural' : sampling mass ~ class_count (true data prior)
+    A fully 'uniform' sampler badly distorts the real 9/51/40 class prior and
+    makes the model under-predict the majority class; 'sqrt' keeps class 0
+    well-represented while staying far closer to the true distribution.
     """
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if data_dir is None:
@@ -174,19 +273,34 @@ def get_upgraded_dataloaders(data_dir=None, blendshapes_file=None, batch_size=32
 
     print(f"Dataset split -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}", flush=True)
 
-    train_transform, val_transform = get_image_transforms(img_size=img_size)
+    train_transform, val_transform = get_image_transforms(img_size=img_size, strong=strong_aug)
 
-    train_dataset = StudentEngagementDataset(train_df, transform=train_transform)
-    val_dataset = StudentEngagementDataset(val_df, transform=val_transform)
-    test_dataset = StudentEngagementDataset(test_df, transform=val_transform)
+    train_dataset = StudentEngagementDataset(train_df, transform=train_transform,
+                                             flip_prob=flip_prob)
+    val_dataset = StudentEngagementDataset(val_df, transform=val_transform, flip_prob=0.0)
+    test_dataset = StudentEngagementDataset(test_df, transform=val_transform, flip_prob=0.0)
 
     # Fix author's 3-sample bug with proper sample-level weights
     train_labels = np.array(train_dataset.labels)
-    class_counts = np.bincount(train_labels, minlength=3)
-    class_weights = 1.0 / np.maximum(class_counts, 1)
-    class_weights = class_weights / class_weights.sum()
+    class_counts = np.bincount(train_labels, minlength=3).astype(np.float64)
 
-    sample_weights = np.array([class_weights[y] for y in train_labels], dtype=np.float32)
+    mode = (balance_mode or 'sqrt').lower()
+    if mode == 'uniform':
+        cls_weights = 1.0 / np.maximum(class_counts, 1.0)
+    elif mode in ('natural', 'none', 'off'):
+        cls_weights = np.ones_like(class_counts)
+    else:  # 'sqrt' (default compromise)
+        cls_weights = 1.0 / np.sqrt(np.maximum(class_counts, 1.0))
+    cls_weights = cls_weights / cls_weights.sum()
+
+    # Effective sampling probability of each class under WeightedRandomSampler:
+    #   P(class c) ~ count_c * weight_c
+    eff_prob = class_counts * cls_weights
+    eff_prob = eff_prob / eff_prob.sum()
+    print(f"Sampler balance mode: '{mode}' -> effective class sampling "
+          f"probabilities: {np.round(eff_prob, 4).tolist()}", flush=True)
+
+    sample_weights = np.array([cls_weights[y] for y in train_labels], dtype=np.float32)
     sample_weights_tensor = torch.from_numpy(sample_weights)
 
     train_sampler = WeightedRandomSampler(
