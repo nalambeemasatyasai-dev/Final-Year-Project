@@ -149,21 +149,6 @@ with st.sidebar:
     st.info(f"**Architecture**: {model_info['description']}")
     
     st.divider()
-    st.subheader("🛡️ Fit Guard (anti over/underfit)")
-    st.caption("Train acc ≈ 83-85% vs val ≈ 69-73% = healthy regularised gap. "
-               "A >15pt gap would flag overfit; train ≈ val at low accuracy would flag underfit. "
-               "Live path uses val-weighted ensemble + 6-view TTA + cross-fitted bias (val only, never test).")
-    st.divider()
-    st.subheader("⚡ Inference Mode")
-    st.caption("Choose how many views/models the UI fuses: single view, 6 views, or the full 6-model ensemble with 6-view TTA and guarded bias.")
-    mode = st.radio("Inference mode", ["Fast (single 224 crop, best model)", "Balanced (6 views, full ensemble)", "Max (6 models x 6 TTA, calibrated)"], horizontal=True)
-    if mode == "Balanced (6 views, full ensemble)":
-        st.caption("6-crop TTA over the full 6-model ensemble (default). ~6x cost, best accuracy.")
-    elif mode == "Max (6 models x 6 TTA, calibrated)":
-        st.caption("Full ensemble + 6-view TTA + val-calibrated bias. Highest robustness, highest overhead.")
-    else:
-        st.caption("Single best model + single 224 crop. ~8x faster than Max, lower accuracy.")
-    st.divider()
     st.subheader("🔍 Preprocessing Settings")
     crop_margin = st.slider("Face Crop Margin (Padding)", min_value=0.00, max_value=0.60, value=0.05, step=0.05,
                             help="Extra margin around the detected face. 0.05 matches the tight 100x100 training crops (best accuracy). Increase only for wide group shots where the face box looks too tight.")
@@ -174,7 +159,7 @@ with st.sidebar:
     st.code(TESTING_RESULTS_DIR, language="text")
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["📸 Test New Images (Upload & Predict)", "📁 Previous Test History", "📊 Model Benchmark & Ablations"])
+tab1, tab2, tab3 = st.tabs(["📸 Test New Images (Upload & Predict)", "📁 Previous Test History", "📊 Model Performance Comparison"])
 
 # TAB 1: Test New Images
 with tab1:
@@ -187,7 +172,7 @@ with tab1:
     image_filename = "test_image.jpg"
     
     if input_method == "Upload Local Image":
-        file_buffer = st.file_uploader("Choose an image (JPG, PNG, JPEG, WEBP)", type=["jpg", "jpeg", "png", "webp"])
+        file_buffer = st.file_uploader("Choose an image (JPG, PNG, JPEG)", type=["jpg", "jpeg", "png"])
         if file_buffer is not None:
             uploaded_image = Image.open(file_buffer)
             image_filename = file_buffer.name
@@ -397,10 +382,10 @@ with tab2:
         st.info("No test history recorded yet. Upload an image in Tab 1 to generate your first test session!")
 
 
-# TAB 3: Model Benchmark & Ablation Study
+# TAB 3: Model Performance Comparison
 with tab3:
-    st.subheader("📊 Deep Learning Benchmark & Ablation Study")
-    st.write("Comparison of Dual-Branch Multimodal Fusion vs. Image-Only baselines on the 442 unseen holdout test split:")
+    st.subheader("📊 Model Performance & Accuracy Comparison")
+    st.write("Comparison of our Dual-Branch Multimodal models vs. Image-Only models on the test dataset:")
     
     dl_eval_csv = os.path.join(BASE_DIR, "Results", "DL", "dl_models_evaluation.csv")
     if os.path.exists(dl_eval_csv):
@@ -411,25 +396,3 @@ with tab3:
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(lambda v: f"{float(v)*100:.2f}%")
         st.dataframe(df_display, use_container_width=True)
-    
-    st.divider()
-    st.subheader("📈 Confusion Matrices & Training Loss Curves")
-    cm_cols = st.columns(2)
-    with cm_cols[0]:
-        cm_dual = os.path.join(BASE_DIR, "Results", "DL", "confusion_matrix_resnet.png")
-        if os.path.exists(cm_dual):
-            st.image(cm_dual, caption="Dual-Branch ResNet-18 Confusion Matrix")
-    with cm_cols[1]:
-        cm_img = os.path.join(BASE_DIR, "Results", "DL", "confusion_matrix_resnet_image_only.png")
-        if os.path.exists(cm_img):
-            st.image(cm_img, caption="Image-Only ResNet-18 Confusion Matrix")
-            
-    tc_cols = st.columns(2)
-    with tc_cols[0]:
-        tc_dual = os.path.join(BASE_DIR, "Results", "DL", "training_curves_resnet.png")
-        if os.path.exists(tc_dual):
-            st.image(tc_dual, caption="Dual-Branch ResNet-18 Training Curves")
-    with tc_cols[1]:
-        tc_img = os.path.join(BASE_DIR, "Results", "DL", "training_curves_resnet_image_only.png")
-        if os.path.exists(tc_img):
-            st.image(tc_img, caption="Image-Only ResNet-18 Training Curves")

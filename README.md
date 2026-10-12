@@ -530,29 +530,37 @@ Recorded directly from [`Results/all_models_benchmark.md`](Results/all_models_be
 
 ## 🚀 6. Step-by-Step Reproduction & Execution Guide
 
-### Step 6.1: Environment Setup
+### Step 6.1: Clone & Environment Setup
 ```powershell
-# Navigate to project root
-cd "C:\Users\golla\Downloads\Student-Engagement-main"
+# Clone the repository
+git clone https://github.com/nalambeemasatyasai-dev/Final-Year-Project.git
+cd Final-Year-Project
 
-# Install GPU-accelerated PyTorch & core dependencies
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-pip install mediapipe numpy pandas scikit-learn xgboost lightgbm catboost matplotlib seaborn pillow streamlit
+# Install core dependencies (CPU is fully supported for live UI inference):
+pip install -r requirements.txt
 ```
+> 💡 **CPU vs. GPU**: Model training was performed with GPU acceleration, but **testing and live UI inference run seamlessly on any standard laptop CPU** without requiring dedicated GPU hardware.
 
-### Step 6.2: Batch Extract 52 FACS Muscle Blendshapes
+### Step 6.2: One-Click Streamlit Dashboard Launch
+Simply double-click [`run_ui.bat`](run_ui.bat) or execute:
+```powershell
+python -m streamlit run app.py
+```
+Open **`http://localhost:8501`** in any web browser.
+
+### Step 6.3: Batch Extract 52 FACS Muscle Blendshapes (Optional / Dataset Preprocessing)
 Extracts normalized Action Units for all 4,421 images in **68 seconds**:
 ```powershell
 python Feature_extract/batch_extract_blendshapes.py
 ```
 
-### Step 6.3: Train Pure FACS Classical ML ($S_0$ to $S_3$)
+### Step 6.4: Train Pure FACS Classical ML ($S_0$ to $S_3$)
 ```powershell
 python ML_models/train_gbdt_classifiers.py
 ```
 *Outputs evaluation CSVs and ROC curve plots directly to `Results/ML/`.*
 
-### Step 6.4: Train Upgraded Multimodal Deep Learning Models
+### Step 6.5: Train Upgraded Multimodal Deep Learning Models
 Train any backbone of choice with full GPU acceleration, Lanczos preprocessing, and automatic Early Stopping:
 
 ```powershell
@@ -566,19 +574,19 @@ python DL_models/train_deep_learning.py --backbone efficientnet_b1 --epochs 20 -
 python DL_models/train_deep_learning.py --backbone resnet50 --epochs 20 --batch_size 32 --lr 3e-4
 ```
 
-### Step 6.5: Run 10 Random Unseen Test Verifications
+### Step 6.6: Run 10 Random Unseen Test Verifications
 ```powershell
 python predict_engagement.py --test_random 10 --checkpoint DL_models/hyper-1/best_model_upgraded_resnet.pth
 ```
 *Achieves **80% to 90% (8-9/10 correct)** on random unseen holdout faces.*
 
-### Step 6.6: Explainable AI (XAI) & Grad-CAM Attention Heatmaps
+### Step 6.7: Explainable AI (XAI) & Grad-CAM Attention Heatmaps
 To visually verify where the convolutional neural network is focusing on the student's face:
 * **Notebook**: [`DL_models/Visualize_gradcam.ipynb`](DL_models/Visualize_gradcam.ipynb)
 * Computes **Grad-CAM (Gradient-weighted Class Activation Mapping)** on the final convolutional layer of ResNet-18 (`layer4`) and EfficientNet (`features[-1]`).
 * Overlays a thermal activation heatmap directly onto the original face crop, highlighting the **periorbital (eyes/eyebrows)** and **perioral (mouth/jaw)** muscle regions that triggered the engagement prediction.
 
-### Step 6.7: Master Jupyter / Colab Notebook
+### Step 6.8: Master Jupyter / Colab Notebook
 * **Notebook**: [`Student_Engagement_Pipeline.ipynb`](Student_Engagement_Pipeline.ipynb)
 * Complete end-to-end interactive notebook ready for Google Colab or local Jupyter presentation to your academic guide or review committee.
 
@@ -586,19 +594,41 @@ To visually verify where the convolutional neural network is focusing on the stu
 
 ## 💻 7. Interactive Streamlit Web Dashboard
 
-A web dashboard built with Streamlit for live monitoring, video snapshot analysis, and multi-model comparison:
+The production dashboard (`app.py`) provides an interactive, real-time testing suite:
 
 ```powershell
+# Launch the dashboard
+run_ui.bat
+# or
 python -m streamlit run app.py
 ```
-Open **`http://localhost:8501`** in any web browser.
+Access at **`http://localhost:8501`**.
 
-### Features:
-1. **Multi-Model Selector**: Switch between Dual-Branch ResNet-18, ResNet-50, EfficientNet-B0, and EfficientNet-B1.
-2. **Arbitrary Image Upload & WebCam Snapshot**: Automatically detects face, crops using Lanczos sinc resampling, and extracts 52 FACS blendshapes.
-3. **Engagement Gauge & Confidence Distribution**: Displays class probabilities for Disengaged, Nominally Engaged, and Highly Engaged.
-4. **Interactive 52 FACS Radar / Bar Chart**: Shows the exact facial muscle activations driving the prediction.
-5. **Session Archiving**: Automatically saves every analyzed test image and JSON prediction log into `Testing_Results/` for historical auditing.
+### Key UI Features:
+1. **Model Selection**: Switch between the **Multimodal Ensemble (Recommended - Best Accuracy)**, Dual-Branch ResNet-18, ResNet-50, EfficientNet-B0, and EfficientNet-B1.
+2. **Flexible Input Source**:
+   - **Upload Local Image**: Supports high-resolution `JPG`, `JPEG`, and `PNG` uploads.
+   - **Live Webcam Snapshot**: Capture a photo of the student directly in the browser.
+   - **Benchmark Test Samples**: Pre-loaded representative test cases for Disengaged, Nominally Engaged, and Highly Engaged states.
+3. **Face Detection & Standardized Preprocessing**:
+   - Uses **Google MediaPipe Face Landmarker** (`face_landmarker.task`) to detect 468 3D landmarks and compute a square face crop with anti-aliased Lanczos sinc resampling.
+   - Robust automated fallback to OpenCV Haar Cascade face detection if landmarks are obstructed.
+4. **Transparent Explainable AI (XAI)**:
+   - Displays the **Top Active FACS Muscle Action Units** alongside their **Activation Scores** (0.0 to 1.0), showing the exact facial muscle movements driving the prediction.
+5. **Prediction Results & Attentiveness Score**:
+   - Class probabilities for **Class 0 (Disengaged)**, **Class 1 (Nominally Engaged)**, and **Class 2 (Highly Engaged)**.
+   - **Total Attentiveness Metric**: Combined probability of active responsiveness and attentive screen listening.
+6. **3-Tab Functional Layout**:
+   - **📸 Tab 1: Test New Images**: Live upload, webcam snapshot, and real-time engagement analysis.
+   - **📁 Tab 2: Previous Test History**: Interactive session inspector allowing reviewers to review past test photos, crops, FACS CSVs, and prediction records.
+   - **📊 Tab 3: Model Performance Comparison**: Comprehensive comparison table evaluating Multimodal Dual-Branch architectures against Image-Only baselines on the 442 unseen holdout test split.
+7. **Automated Audit Archiving**: Every test automatically writes to `Testing_Results/<test_session>/`:
+   - `original_<name>.jpg` (Raw input)
+   - `cropped_face_224.jpg` (Processed 224x224 crop)
+   - `annotated_detection.jpg` (Visual bounding box overlay)
+   - `facs_blendshapes.csv` (All 52 FACS muscle activation scores)
+   - `prediction_result.json` (Machine-readable metadata)
+   - `report.txt` (Human-readable summary report with one-click download button)
 
 ---
 
@@ -676,15 +706,11 @@ The original paper relied on OpenFace, which requires compiling legacy C++ binar
 
 ---
 
-### Q8: What happens when we combine ResNet-18 + EfficientNet-B0 + 52 FACS into an Ensemble?
+### Q8: How does the Full 6-Model Calibrated Ensemble work, and how does Calibration function?
 **Answer**:
-Combining **Dual-Branch ResNet-18** (weight 0.55) and **Dual-Branch EfficientNet-B0** (weight 0.45) with 52 FACS blendshapes yields our **highest overall performance**:
-- **Test Accuracy**: **69.68%** (nearly **70.0%**), outperforming ResNet-18 alone (68.10%) and EfficientNet-B0 alone (65.84%).
-- **Macro F1-Score**: **71.91%** (a **+2.63% boost** over ResNet-18).
-- **Macro Recall**: **73.60%** across all engagement categories.
-- **Why Ensemble Fusion Works**:
-  1. **Complementary Inductive Biases**: ResNet uses standard residual skip connections (preserving global spatial features like head pose and gaze), while EfficientNet uses depthwise separable MBConv blocks with squeeze-and-excitation (capturing fine localized textures and micro-expressions).
-  2. **Variance Reduction**: Blending softmax probability distributions cancels out idiosyncratic individual errors while reinforcing true consensus signals across the two distinct network topologies.
+The **Multimodal Ensemble** combines all 6 trained checkpoints (Dual-Branch ResNet-18, ResNet-50, EfficientNet-B0, EfficientNet-B1, plus image-only variants) with 6-View Test-Time Augmentation (TTA) to achieve our highest overall performance (**69.00% accuracy, 70.14% F1-score, and 0 false alarms between Class 0 & Class 2**).
+- **Step 1: Accuracy-Weighted Voting**: Instead of taking an equal average where weaker models drag down stronger ones, each model's vote is weighted based on its validation score (e.g., EfficientNet-B1 at 70.8% gets higher weight than an image-only model at 64.0%).
+- **Step 2: Prior Bias Alignment**: Different neural networks output logits on slightly different numerical baselines. The calibration step mathematically zero-aligns the baseline offsets across all 6 models, ensuring that the combined prediction is balanced and sensitive across all three engagement classes.
 
 ---
 
@@ -698,6 +724,27 @@ In deep learning, neural networks are often criticized as opaque "black boxes". 
   1. For **Class 0 (Disengaged)**: The highest heat activations concentrate on **closed eyelids**, **slumped chin postures**, and **averted eye gaze**.
   2. For **Class 2 (Highly Engaged)**: The activations concentrate firmly on the **eyebrow furrow region (Action Units 1, 2, 4)** and **direct pupil gaze**.
   3. The background regions receive **zero activation**, visually verifying that the network is learning true biomechanical engagement signals.
+
+---
+
+### Q10: What does the "Activation Score" in the Top Active FACS table signify?
+**Answer**:
+The **Activation Score** ranges continuously from **0.0 to 1.0 (0% to 100%)** and measures the anatomical contraction intensity of specific facial muscles:
+- `0.00`: Muscle is completely relaxed (e.g., neutral resting face).
+- `0.20 – 0.40`: Subtle micro-movement (e.g., mild brow raise or normal blink).
+- `0.50 – 0.80`: Strong active muscle contraction (e.g., clear squint, focused brow tension, or wide smile).
+- `0.90 – 1.00`: Maximum contraction (e.g., full eyelid closure during a drowsy blink or wide open yawn).
+- **Explainable AI (XAI)**: Displaying the top active action units in the dashboard provides transparency—proving that a "Disengaged" verdict is justified by droopy eyelids (`eyeBlink`) or looking away (`eyeLookDown`), while "Highly Engaged" is justified by alert eyes (`eyeWide`) and concentrated brows (`browInnerUp`).
+
+---
+
+### Q11: Can the system run in real-time on standard laptop CPUs without a dedicated GPU?
+**Answer**:
+**Yes, absolutely.**
+- **Training vs. Inference**: Deep learning training requires millions of backward gradient updates over many epochs, which necessitates an NVIDIA GPU (trained on an RTX 2050).
+- **Inference**: Running a test on an image or webcam snapshot requires only a **single forward pass**.
+- In [`inference_engine.py`](inference_engine.py), the engine dynamically queries `torch.cuda.is_available()`. If no GPU is present, it automatically maps all tensors and model weights to the CPU (`map_location='cpu'`).
+- Combined with Google MediaPipe's highly optimized CPU Face Landmarker (XNNPACK acceleration), full multimodal prediction executes in **~1 to 2 seconds on standard CPU hardware**.
 
 ---
 

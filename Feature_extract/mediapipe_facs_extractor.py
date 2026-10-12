@@ -153,25 +153,31 @@ def extract_blendshapes_from_image(image_input, detector=None):
     eye_cascade = os.path.join(root_dir, 'haarcascade_eye.xml')
     smile_cascade = os.path.join(root_dir, 'haarcascade_smile.xml')
     
-    if os.path.exists(eye_cascade):
-        cc_eye = cv2.CascadeClassifier(eye_cascade)
-        if not cc_eye.empty():
-            eyes = cc_eye.detectMultiScale(gray, 1.1, 3)
-            if len(eyes) >= 2:
-                if 'eyeWideLeft' in name_to_idx: features[name_to_idx['eyeWideLeft']] = 0.28
-                if 'eyeWideRight' in name_to_idx: features[name_to_idx['eyeWideRight']] = 0.28
-                if 'browInnerUp' in name_to_idx: features[name_to_idx['browInnerUp']] = 0.12
-            elif len(eyes) == 0:
-                if 'eyeBlinkLeft' in name_to_idx: features[name_to_idx['eyeBlinkLeft']] = 0.55
-                if 'eyeBlinkRight' in name_to_idx: features[name_to_idx['eyeBlinkRight']] = 0.55
+    if os.path.exists(eye_cascade) and hasattr(cv2, 'CascadeClassifier'):
+        try:
+            cc_eye = cv2.CascadeClassifier(eye_cascade)
+            if not cc_eye.empty():
+                eyes = cc_eye.detectMultiScale(gray, 1.1, 3)
+                if len(eyes) >= 2:
+                    if 'eyeWideLeft' in name_to_idx: features[name_to_idx['eyeWideLeft']] = 0.28
+                    if 'eyeWideRight' in name_to_idx: features[name_to_idx['eyeWideRight']] = 0.28
+                    if 'browInnerUp' in name_to_idx: features[name_to_idx['browInnerUp']] = 0.12
+                elif len(eyes) == 0:
+                    if 'eyeBlinkLeft' in name_to_idx: features[name_to_idx['eyeBlinkLeft']] = 0.55
+                    if 'eyeBlinkRight' in name_to_idx: features[name_to_idx['eyeBlinkRight']] = 0.55
+        except Exception:
+            pass
                 
-    if os.path.exists(smile_cascade):
-        cc_smile = cv2.CascadeClassifier(smile_cascade)
-        if not cc_smile.empty():
-            smiles = cc_smile.detectMultiScale(gray, 1.3, 8)
-            if len(smiles) > 0:
-                if 'mouthSmileLeft' in name_to_idx: features[name_to_idx['mouthSmileLeft']] = 0.45
-                if 'mouthSmileRight' in name_to_idx: features[name_to_idx['mouthSmileRight']] = 0.45
+    if os.path.exists(smile_cascade) and hasattr(cv2, 'CascadeClassifier'):
+        try:
+            cc_smile = cv2.CascadeClassifier(smile_cascade)
+            if not cc_smile.empty():
+                smiles = cc_smile.detectMultiScale(gray, 1.3, 8)
+                if len(smiles) > 0:
+                    if 'mouthSmileLeft' in name_to_idx: features[name_to_idx['mouthSmileLeft']] = 0.45
+                    if 'mouthSmileRight' in name_to_idx: features[name_to_idx['mouthSmileRight']] = 0.45
+        except Exception:
+            pass
 
     return features
 

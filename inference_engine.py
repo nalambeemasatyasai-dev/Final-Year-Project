@@ -344,9 +344,13 @@ def crop_face_and_extract_blendshapes(pil_image, target_size=(224, 224), margin=
         cascade_file = next((p for p in cascade_candidates if os.path.exists(p)), None)
         faces = ()
         if cascade_file:
-            cc = cv2.CascadeClassifier(cascade_file)
-            if not cc.empty():
-                faces = cc.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+            try:
+                if hasattr(cv2, 'CascadeClassifier'):
+                    cc = cv2.CascadeClassifier(cascade_file)
+                    if not cc.empty():
+                        faces = cc.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+            except Exception:
+                faces = ()
 
         if len(faces) > 0:
             # Pick largest detected face
