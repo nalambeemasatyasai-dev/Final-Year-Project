@@ -1,7 +1,7 @@
-Feature_Set,model,Accuracy,Precision,Recall,F-measure
-S1,XGBoost,0.491,0.4154,0.4205,0.4164
-S1,CatBoost,0.4932,0.4328,0.4482,0.4371
-S1,Random Forest,0.5023,0.4205,0.4154,0.4164
-S1,Gradient Boosting,0.4955,0.4178,0.4239,0.4191
-S1,Decision Tree,0.4412,0.4585,0.4505,0.3679
-S1,SVM,0.509,0.4024,0.3689,0.3583
+Feature_Set, model            , Accuracy, Precision, Recall, F-measure
+S1         , XGBoost          ,   0.491 ,    0.4154, 0.4205,    0.4164
+S1         , CatBoost         ,   0.4932,    0.4328, 0.4482,    0.4371
+S1         , Random Forest    ,   0.5023,    0.4205, 0.4154,    0.4164
+S1         , Gradient Boosting,   0.4955,    0.4178, 0.4239,    0.4191
+S1         , Decision Tree    ,   0.4412,    0.4585, 0.4505,    0.3679
+S1         , SVM              ,   0.509 ,    0.4024, 0.3689,    0.3583
