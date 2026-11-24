@@ -424,6 +424,69 @@ flowchart TD
                                            └───────────────────────────────┘
 ```
 
+#### 📐 Detailed Layer-by-Layer Architecture (Directly from PyTorch Code: `dual_branch_network.py`)
+
+The deep learning network is implemented via two cooperating neural modules:
+
+##### 1. Branch A: Visual Convolutional Backbone (`self.visual_backbone`)
+* **Input Tensor**: `(Batch_Size, 3, 224, 224)` (Normalized with ImageNet $\mu=[0.485, 0.456, 0.406], \sigma=[0.229, 0.224, 0.225]$).
+* **Feature Extraction**:
+  - `ResNet-18`: 4 Residual stages (`layer1` to `layer4`) $\to$ `AdaptiveAvgPool2d((1, 1))` $\to$ `torch.flatten(x, 1)` $\to$ **512-D Visual Feature Vector**.
+  - `EfficientNet-B0 / B1`: 16 MBConv blocks with Squeeze-and-Excitation $\to$ `avgpool` $\to$ `torch.flatten(x, 1)` $\to$ **1,280-D Visual Feature Vector**.
+  - `ResNet-50`: 3-layer Bottleneck residual stages $\to$ `avgpool` $\to$ `torch.flatten(x, 1)` $\to$ **2,048-D Visual Feature Vector**.
+
+##### 2. Branch B: Geometric Action Unit Projector (`FACSBlendshapesBranch`)
+* **Input Tensor**: `(Batch_Size, 52)` (Continuous MediaPipe Action Unit activations in $[0.0, 1.0]$).
+* **Sequential Layer Stack**:
+  1. `nn.Linear(52, 128)` — Projects 52 raw muscle scores into an expanded 128-D latent manifold.
+  2. `nn.LayerNorm(128)` — Stabilizes activations across samples and controls variance.
+  3. `nn.GELU()` — Gaussian Error Linear Unit activation for smooth gradient flow.
+  4. `nn.Dropout(p=0.10)` — Prevents co-adaptation of specific action unit channels.
+  5. `nn.Linear(128, 64)` — Compresses representation down to a compact 64-D muscle embedding.
+  6. `nn.LayerNorm(64)` — Second normalization stage.
+  7. `nn.GELU()` — Final geometric non-linearity.
+* **Output Tensor**: `(Batch_Size, 64)`.
+
+##### 3. Multimodal Concatenation & Classification Head (`self.fusion_head`)
+* **Concatenation**: `fused = torch.cat([visual_feat, geom_feat], dim=1)`
+* **Dimension Mapping Across Backbones**:
+  - **ResNet-18 Dual-Branch**: $512\text{ (Visual)} + 64\text{ (FACS)} = \mathbf{576\text{ Dimensions}}$
+  - **EfficientNet-B0 / B1 Dual-Branch**: $1280\text{ (Visual)} + 64\text{ (FACS)} = \mathbf{1344\text{ Dimensions}}$
+  - **ResNet-50 Dual-Branch**: $2048\text{ (Visual)} + 64\text{ (FACS)} = \mathbf{2112\text{ Dimensions}}$
+* **Classification Pipeline**:
+  1. `nn.LayerNorm(total_features)` — Normalizes the combined vision + geometry feature vector.
+  2. `nn.Linear(total_features, 256)` — Multimodal fusion bottleneck projection.
+  3. `nn.GELU()` — Non-linear activation.
+  4. `nn.Dropout(p=0.25)` — Regularization dropout.
+  5. `nn.Linear(256, 3)` — Final classification layer producing 3 raw logits:
+     - `Logit[0]`: Disengaged (Class 0)
+     - `Logit[1]`: Nominally Engaged (Class 1)
+     - `Logit[2]`: Highly Engaged (Class 2)
+
+##### 4. PyTorch Forward Pass Implementation
+```python
+def forward(self, images, blendshapes=None):
+    # Branch A: Deep visual features
+    visual_feat = self.extract_visual_features(images)
+
+    # Image-only ablation mode (fallback)
+    if self.image_only or blendshapes is None:
+        return self.fusion_head(visual_feat)
+
+    # Branch B: FACS Blendshape scores
+    geom_feat = self.blendshape_projector(blendshapes)
+
+    # Multimodal Concatenation: [Batch, visual_dim + 64]
+    fused = torch.cat([visual_feat, geom_feat], dim=1)
+
+    # Classification Logits: [Batch, 3]
+    logits = self.fusion_head(fused)
+    return logits
+```
+
+##### 5. Multimodal Data Synchronization (`FLIP_PERMUTATION`)
+In [`DL_models/multimodal_dataloader.py`](DL_models/multimodal_dataloader.py), when data augmentation applies a horizontal flip to the student's face, the dataloader uses `FLIP_PERMUTATION` to swap **20 symmetrical left/right Action Unit pairs** (e.g. `eyeLookInLeft` $\leftrightarrow$ `eyeLookInRight`, `mouthSmileLeft` $\leftrightarrow$ `mouthSmileRight`). This guarantees that the geometric muscle vector remains physically synchronized with the mirrored face crop.
+
 ---
 
 ### 3.3 Explainable AI (XAI) Grad-CAM Visual Attention Architecture
