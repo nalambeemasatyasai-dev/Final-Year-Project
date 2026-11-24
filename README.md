@@ -258,12 +258,12 @@ flowchart TD
     A["Input Student Video Frame / Photo"] --> B["Google MediaPipe Tasks API<br/>478 3D Biomechanical Facial Mesh"]
     B --> C["52 Normalized FACS Muscle Action Blendshapes<br/>Continuous Activation Scores [0.0 - 1.0]"]
     
-    C --> D1["Subset S0: Eye & Brow (14 AUs)<br/>browDown, eyeBlink, eyeSquint, eyeLook..."]
-    C --> D2["Subset S1: Mouth & Jaw (26 AUs)<br/>jawOpen, smile, frown, pucker..."]
-    C --> D3["Subset S2: Cheek & Nose (12 AUs)<br/>cheekPuff, noseSneer, cheekSquint..."]
-    C --> D4["Subset S3: Holistic FACS (All 52 AUs)<br/>Complete Muscle Activation Spectrum"]
+    C --> D0["Subset S0: Eye & Gaze (14 AUs)<br/>eyeBlink, eyeSquint, eyeLookDown/Up/In/Out, eyeWide..."]
+    C --> D1["Subset S1: Eyebrow & Forehead (5 AUs)<br/>browDown, browInnerUp, browOuterUp..."]
+    C --> D2["Subset S2: Mouth, Jaw & Cheek (30 AUs)<br/>jawOpen, smile, frown, pucker, cheekSquint..."]
+    C --> D3["Subset S3: Full 52 FACS Spectrum (52 AUs)<br/>Holistic Biomechanical Muscle Spectrum"]
     
-    D1 & D2 & D3 & D4 --> E["Strict Stratified 80/10/10 Split<br/>Zero Cross-Frame Data Leakage Protocol"]
+    D0 & D1 & D2 & D3 --> E["Strict Stratified 80/10/10 Split<br/>Zero Cross-Frame Data Leakage Protocol"]
     
     E --> F["Advanced Classical ML Suite<br/>CatBoost | SVM | XGBoost | Random Forest | LightGBM"]
     
@@ -296,10 +296,10 @@ flowchart TD
                    ┌───────────────────┘              │              │              └───────────────────┐
                    ▼                                  ▼              ▼                                  ▼
       ┌─────────────────────────┐       ┌──────────────────┐  ┌──────────────────┐       ┌─────────────────────────┐
-      │  Subset S0: Eye & Brow  │       │ Subset S1: Mouth │  │ Subset S2: Cheek │       │ Subset S3: Full FACS    │
-      │  (14 Action Units)      │       │ & Jaw (26 AUs)   │  │ & Nose (12 AUs)  │       │ (All 52 Action Units)   │
-      │  browDown, eyeBlink,    │       │ jawOpen, smile,  │  │ cheekPuff, nose, │       │ Complete Facial Muscle  │
-      │  eyeSquint, eyeWide...  │       │ frown, pucker... │  │ cheekSquint...   │       │ Biomechanical Spectrum  │
+      │  Subset S0: Eye & Gaze  │       │ Subset S1: Brow  │  │ Subset S2: Mouth │       │ Subset S3: Full FACS    │
+      │  (14 Action Units)      │       │ & Forehead (5 AU)│  │ Jaw, Cheek (30)  │       │ (All 52 Action Units)   │
+      │  eyeBlink, eyeSquint,   │       │ browDown, browUp,│  │ jawOpen, smile,  │       │ Complete Facial Muscle  │
+      │  eyeLookDown/Up/In/Out..│       │ browInnerUp...   │  │ pucker, cheek... │       │ Biomechanical Spectrum  │
       └────────────┬────────────┘       └────────┬─────────┘  └────────┬─────────┘       └────────────┬────────────┘
                    │                             │                     │                              │
                    └─────────────────────────────┼─────────────────────┼──────────────────────────────┘
@@ -317,8 +317,8 @@ flowchart TD
                                │ 1. Random Forest (Ensemble Trees) │
                                │ 2. CatBoost (Ordered Boosting)    │
                                │ 3. XGBoost (Gradient Boosting)    │
-                               │ 4. LightGBM (Histogram GBDT)      │
-                               │ 5. Decision Tree (CART Baseline)  │
+                               │ 4. Support Vector Machine (SVM)   │
+                               │ 5. Gradient Boosting / Trees      │
                                └─────────────────┬─────────────────┘
                                                  │
                                                  ▼
@@ -332,9 +332,9 @@ flowchart TD
 ```
 
 #### The Four Functional Subsets:
-1. **$S_0$ — Upper Face / Eye & Brow Subsystem (14 Features)**: Captures visual focus, fatigue, and cognitive load (`browDownLeft/Right`, `browInnerUp`, `eyeBlinkLeft/Right`, `eyeSquintLeft/Right`, `eyeLookDown/Up/In/Out`).
-2. **$S_1$ — Lower Face / Mouth & Jaw Subsystem (26 Features)**: Captures verbal participation, yawning, boredom, and affective expression (`jawOpen`, `mouthSmileLeft/Right`, `mouthFrownLeft/Right`, `mouthPucker`, `mouthStretch`, `mouthRollLower/Upper`).
-3. **$S_2$ — Mid Face / Cheek & Nose Subsystem (12 Features)**: Captures subtle micro-expressions and facial tension (`cheekPuff`, `cheekSquintLeft/Right`, `noseSneerLeft/Right`, `tongueOut`).
+1. **$S_0$ — Eye & Gaze Subsystem (14 Features)**: Captures visual focus, attentiveness, and fatigue (`eyeBlinkLeft/Right`, `eyeSquintLeft/Right`, `eyeWideLeft/Right`, `eyeLookDown/Up/In/Out`).
+2. **$S_1$ — Eyebrow & Forehead Subsystem (5 Features)**: Captures cognitive load, mental strain, and confusion (`browDownLeft/Right`, `browInnerUp`, `browOuterUpLeft/Right`).
+3. **$S_2$ — Mouth, Jaw & Cheek Subsystem (30 Features)**: Captures verbal participation, yawning, boredom, and affective responsiveness (`jawOpen`, `mouthSmileLeft/Right`, `mouthFrownLeft/Right`, `mouthPucker`, `mouthStretch`, `cheekPuff`, `cheekSquintLeft/Right`).
 4. **$S_3$ — Full Biomechanical Spectrum (All 52 Features)**: Combines all facial muscle groups to model holistic engagement expression.
 
 ---
